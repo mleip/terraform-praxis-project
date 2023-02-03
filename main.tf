@@ -1,55 +1,172 @@
-resource "azurerm_resource_group" "michael-leipner-project" {
-  name     = "michael-leipner-project"
+#
+# Ressourcengruppe erstellen
+###########################################################################################################################
+resource "azurerm_resource_group" "cicdproject" {
+  name     = "michael-leipner-rg"
   location = "West Europe"
 }
-
-resource "azurerm_virtual_network" "michael-project" {
-  name                = "michael-project-network"
+#
+# 
+############################################################################################################################
+resource "azurerm_virtual_network" "cinetwork" {
+  name                = "cicdproject-network"
   address_space       = ["10.0.0.0/16"]
-  location            = azurerm_resource_group.michael-leipner-project.location
-  resource_group_name = azurerm_resource_group.michael-leipner-project.name
+  location            = azurerm_resource_group.cicdproject.location
+  resource_group_name = azurerm_resource_group.cicdproject.name
 }
-
-resource "azurerm_subnet" "internal" {
+#
+# 
+############################################################################################################################
+resource "azurerm_subnet" "cisubnet" {
   name                 = "internal"
-  resource_group_name  = azurerm_resource_group.michael-leipner-project.name
-  virtual_network_name = "michael-project-network"
+  resource_group_name  = azurerm_resource_group.cicdproject.name
+  virtual_network_name = azurerm_virtual_network.cinetwork.name
   address_prefixes     = ["10.0.2.0/24"]
 }
-
-#VM1
-
-resource "azurerm_public_ip" "jenkins-vm-public_ip" {
-  name                = "jenkins-vm-public_ip"
-  resource_group_name = azurerm_resource_group.michael-leipner-project.name
-  location            = "West Europe"
+#
+# jenkins public ip
+############################################################################################################################
+resource "azurerm_public_ip" "jenkinspublicip" {
+  name                = "jenkins-public-ip"
+  resource_group_name = azurerm_resource_group.cicdproject.name
+  location            = azurerm_resource_group.cicdproject.location
   allocation_method   = "Dynamic"
 }
-
-resource "azurerm_network_interface" "michael-project-nic1" {
-  name                = "michael-project-nic1"
-  location            = "West Europe"
-  resource_group_name = "michael-leipner-project"
+#
+# webserver public ip
+############################################################################################################################
+resource "azurerm_public_ip" "webserverpublicip" {
+  name                = "webserver-public-ip"
+  resource_group_name = azurerm_resource_group.cicdproject.name
+  location            = azurerm_resource_group.cicdproject.location
+  allocation_method   = "Dynamic"
+}
+#
+# interface jenkins
+############################################################################################################################
+resource "azurerm_network_interface" "jenkinsnic" {
+  name                = "jenkins-nic"
+  location            = azurerm_resource_group.cicdproject.location
+  resource_group_name = azurerm_resource_group.cicdproject.name
 
   ip_configuration {
-    name                          = "jenkins-vm-ip"
-    subnet_id                     = azurerm_subnet.internal.id
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.cisubnet.id
     private_ip_address_allocation = "Dynamic"
-    public_ip_address_id = azurerm_public_ip.jenkins-vm-public_ip.id
+    public_ip_address_id          = azurerm_public_ip.jenkinspublicip.id
   }
+
+  depends_on = [
+    azurerm_public_ip.jenkinspublicip
+  ]
 }
+#
+# interface webserver
+############################################################################################################################
+resource "azurerm_network_interface" "webservernic" {
+  name                = "webserver-nic"
+  location            = azurerm_resource_group.cicdproject.location
+  resource_group_name = azurerm_resource_group.cicdproject.name
 
+  ip_configuration {
+    name                          = "internal"
+    subnet_id                     = azurerm_subnet.cisubnet.id
+    private_ip_address_allocation = "Dynamic"
+    public_ip_address_id          = azurerm_public_ip.webserverpublicip.id
+  }
 
-resource "azurerm_linux_virtual_machine" "jenkins-vm" {
+  depends_on = [
+    azurerm_public_ip.webserverpublicip
+  ]
+}
+#
+# sicherheitsgruppe 
+############################################################################################################################
+resource "azurerm_network_security_group" "cicdproject" {
+  name                = "cicdproject-nsg"
+  location            = azurerm_resource_group.cicdproject.location
+  resource_group_name = azurerm_resource_group.cicdproject.name
+}
+#
+# sshd sicherheitsregel
+############################################################################################################################
+resource "azurerm_network_security_rule" "sshd" {
+  name                        = "sshd"
+  priority                    = 100
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "22"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.cicdproject.name
+  network_security_group_name = azurerm_network_security_group.cicdproject.name
+}
+#
+# web sicherheitsregel
+############################################################################################################################
+resource "azurerm_network_security_rule" "web" {
+  name                        = "web"
+  priority                    = 101
+  direction                   = "Inbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "80"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.cicdproject.name
+  network_security_group_name = azurerm_network_security_group.cicdproject.name
+}
+#
+# 
+############################################################################################################################
+resource "azurerm_network_security_rule" "allout" {
+  name                        = "web"
+  priority                    = 201
+  direction                   = "Outbound"
+  access                      = "Allow"
+  protocol                    = "Tcp"
+  source_port_range           = "*"
+  destination_port_range      = "*"
+  source_address_prefix       = "*"
+  destination_address_prefix  = "*"
+  resource_group_name         = azurerm_resource_group.cicdproject.name
+  network_security_group_name = azurerm_network_security_group.cicdproject.name
+}
+#
+# 
+############################################################################################################################
+resource "azurerm_network_interface_security_group_association" "jenkinsnsg" {
+  network_interface_id      = azurerm_network_interface.jenkinsnic.id
+  network_security_group_id = azurerm_network_security_group.cicdproject.id
+}
+#
+# 
+############################################################################################################################
+resource "azurerm_network_interface_security_group_association" "webservernsg" {
+  network_interface_id      = azurerm_network_interface.webservernic.id
+  network_security_group_id = azurerm_network_security_group.cicdproject.id
+}
+#
+# virtuelle maschine erstellen jenkins
+############################################################################################################################
+resource "azurerm_linux_virtual_machine" "jenkins" {
   name                = "jenkins-vm"
-  resource_group_name = "michael-leipner-project"
-  location            = "West Europe"
+  resource_group_name = azurerm_resource_group.cicdproject.name
+  location            = azurerm_resource_group.cicdproject.location
   size                = "Standard_B1s"
   admin_username      = "azureuser"
-  admin_password      = "Test123456."
-  disable_password_authentication = false
-  network_interface_ids = [azurerm_network_interface.michael-project-nic1.id]
-  
+  network_interface_ids = [
+    azurerm_network_interface.jenkinsnic.id,
+  ]
+
+  admin_ssh_key {
+    username   = "azureuser"
+    public_key = file("./sshkey.pub")
+  }
+
   os_disk {
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
@@ -62,39 +179,23 @@ resource "azurerm_linux_virtual_machine" "jenkins-vm" {
     version   = "latest"
   }
 }
-
-
-#VM2
-resource "azurerm_public_ip" "server-vm-public_ip" {
-  name                = "server-vm-public_ip"
-  resource_group_name = "michael-leipner-project"
-  location            = "West Europe"
-  allocation_method   = "Dynamic"
-}
-
-resource "azurerm_network_interface" "michael-project-nic2" {
-  name                = "michael-project-nic2"
-  location            = "West Europe"
-  resource_group_name = "michael-leipner-project"
-
-  ip_configuration {
-    name                          = "server-vm-ip"
-    subnet_id                     = azurerm_subnet.internal.id
-    private_ip_address_allocation = "Dynamic"
-    public_ip_address_id = azurerm_public_ip.server-vm-public_ip.id
-  }
-}
-
-
-resource "azurerm_linux_virtual_machine" "server-vm" {
-  name                = "server-vm"
-  resource_group_name = "michael-leipner-project"
-  location            = "West Europe"
+#
+# virtuelle maschine webserver
+#############################################################################################################################
+resource "azurerm_linux_virtual_machine" "webserver" {
+  name                = "webserver-vm"
+  resource_group_name = azurerm_resource_group.cicdproject.name
+  location            = azurerm_resource_group.cicdproject.location
   size                = "Standard_B2s"
   admin_username      = "azureuser"
-  admin_password      = "Test123456."
-  disable_password_authentication = false
-  network_interface_ids = [azurerm_network_interface.michael-project-nic2.id]
+  network_interface_ids = [
+    azurerm_network_interface.webservernic.id,
+  ]
+
+  admin_ssh_key {
+    username   = "azureuser"
+    public_key = file("./sshkey.pub")
+  }
 
   os_disk {
     caching              = "ReadWrite"
